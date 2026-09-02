@@ -4,30 +4,34 @@ const app = express();
 
 app.use(express.json());
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 // Home route
 app.get("/", (req, res) => {
     res.json({
         service: "User Service",
-        status: "running"
+        status: "running",
+        port: PORT
     });
 });
 
 // Get users
 app.get("/users", (req, res) => {
-    res.json([
-        {
-            id: 1,
-            name: "Kris",
-            email: "kris@example.com"
-        },
-        {
-            id: 2,
-            name: "Rahul",
-            email: "rahul@example.com"
-        }
-    ]);
+    res.json({
+        instance: PORT,
+        users: [
+            {
+                id: 1,
+                name: "Kris",
+                email: "kris@example.com"
+            },
+            {
+                id: 2,
+                name: "Rahul",
+                email: "rahul@example.com"
+            }
+        ]
+    });
 });
 
 // Get user by ID

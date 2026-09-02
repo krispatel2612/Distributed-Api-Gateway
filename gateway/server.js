@@ -1,6 +1,6 @@
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
-
+const { userServiceLoadBalancer } = require("./loadBalancer");
 const app = express();
 
 const PORT = 3000;
@@ -25,13 +25,7 @@ app.get("/", (req, res) => {
 
 app.use(
     "/api/users",
-    createProxyMiddleware({
-        target: "http://localhost:3001",
-        changeOrigin: true,
-        pathRewrite: (path) => {
-            return "/users" + path;
-        }
-    })
+    userServiceLoadBalancer()
 );
 
 // ===============================
