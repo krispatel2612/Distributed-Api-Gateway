@@ -1,13 +1,19 @@
 const express = require("express");
-const { createProxyMiddleware } = require("http-proxy-middleware");
-const { userServiceLoadBalancer } = require("./loadBalancer");
+const {
+    createProxyMiddleware
+} = require("http-proxy-middleware");
+
+const {
+    handleUserRequest
+} = require("./loadBalancer");
+
 const app = express();
 
 const PORT = 3000;
 
-// ===============================
-// API Gateway Information
-// ===============================
+// ==========================================
+// Gateway Information
+// ==========================================
 
 app.get("/", (req, res) => {
     res.json({
@@ -17,54 +23,48 @@ app.get("/", (req, res) => {
     });
 });
 
-// ===============================
+// ==========================================
 // User Service
-// /api/users → /users
-// /api/users/1 → /users/1
-// ===============================
+// ==========================================
 
 app.use(
     "/api/users",
-    userServiceLoadBalancer()
+    handleUserRequest
 );
 
-// ===============================
+// ==========================================
 // Product Service
-// /api/products → /products
-// /api/products/101 → /products/101
-// ===============================
+// ==========================================
 
 app.use(
     "/api/products",
     createProxyMiddleware({
         target: "http://localhost:3002",
         changeOrigin: true,
-        pathRewrite: (path) => {
-            return "/products" + path;
+        pathRewrite: {
+            "^/": "/products/"
         }
     })
 );
 
-// ===============================
+// ==========================================
 // Order Service
-// /api/orders → /orders
-// /api/orders/1 → /orders/1
-// ===============================
+// ==========================================
 
 app.use(
     "/api/orders",
     createProxyMiddleware({
         target: "http://localhost:3003",
         changeOrigin: true,
-        pathRewrite: (path) => {
-            return "/orders" + path;
+        pathRewrite: {
+            "^/": "/orders/"
         }
     })
 );
 
-// ===============================
-// Gateway Health Check
-// ===============================
+// ==========================================
+// Gateway Health
+// ==========================================
 
 app.get("/health", (req, res) => {
     res.json({
@@ -73,10 +73,12 @@ app.get("/health", (req, res) => {
     });
 });
 
-// ===============================
+// ==========================================
 // Start Gateway
-// ===============================
+// ==========================================
 
 app.listen(PORT, () => {
-    console.log(`API Gateway running on port ${PORT}`);
+    console.log(
+        `API Gateway running on port ${PORT}`
+    );
 });

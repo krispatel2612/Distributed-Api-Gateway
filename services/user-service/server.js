@@ -49,7 +49,8 @@ app.get("/users/:id", (req, res) => {
 app.get("/health", (req, res) => {
     res.json({
         service: "user-service",
-        status: "UP"
+        status: "UP",
+        port: PORT
     });
 });
 
