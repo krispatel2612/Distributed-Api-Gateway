@@ -18,6 +18,15 @@ const {
     login
 } = require("./auth");
 
+const {
+    connectRedis
+} = require("./redisClient");
+
+const {
+    rateLimiter
+} = require("./middleware/rateLimiter");
+
+
 const app = express();
 
 const PORT = 3000;
@@ -52,11 +61,12 @@ app.post(
 
 // ==========================================
 // User Service
-// Protected + Load Balanced
+// Rate Limited + Protected + Load Balanced
 // ==========================================
 
 app.use(
     "/api/users",
+    rateLimiter,
     authenticateToken,
     handleUserRequest
 );
@@ -64,11 +74,12 @@ app.use(
 
 // ==========================================
 // Product Service
-// Protected
+// Rate Limited + Protected
 // ==========================================
 
 app.use(
     "/api/products",
+    rateLimiter,
     authenticateToken,
     createProxyMiddleware({
 
@@ -86,11 +97,12 @@ app.use(
 
 // ==========================================
 // Order Service
-// Protected
+// Rate Limited + Protected
 // ==========================================
 
 app.use(
     "/api/orders",
+    rateLimiter,
     authenticateToken,
     createProxyMiddleware({
 
@@ -124,10 +136,29 @@ app.get("/health", (req, res) => {
 // Start Gateway
 // ==========================================
 
-app.listen(PORT, () => {
+async function startServer() {
 
-    console.log(
-        `API Gateway running on port ${PORT}`
-    );
+    try {
 
-});
+        await connectRedis();
+
+        app.listen(PORT, () => {
+
+            console.log(
+                `API Gateway running on port ${PORT}`
+            );
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Failed to connect to Redis:",
+            error
+        );
+
+        process.exit(1);
+    }
+}
+
+startServer();
