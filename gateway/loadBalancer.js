@@ -17,11 +17,15 @@ const servers = [
 
 let currentServer = 0;
 
+const MAX_RETRIES = 3;
+
+
 // ==========================================
 // Health Check
 // ==========================================
 
 function checkServerHealth(server) {
+
     const request = http.get(
         {
             hostname: "localhost",
@@ -30,7 +34,9 @@ function checkServerHealth(server) {
             timeout: 2000
         },
         (response) => {
+
             if (response.statusCode === 200) {
+
                 if (!server.healthy) {
                     console.log(
                         `Server recovered: ${server.port}`
@@ -38,8 +44,11 @@ function checkServerHealth(server) {
                 }
 
                 server.healthy = true;
+
             } else {
+
                 server.healthy = false;
+
             }
 
             response.resume();
@@ -47,6 +56,7 @@ function checkServerHealth(server) {
     );
 
     request.on("error", () => {
+
         if (server.healthy) {
             console.log(
                 `Server DOWN: ${server.port}`
@@ -57,30 +67,44 @@ function checkServerHealth(server) {
     });
 
     request.on("timeout", () => {
+
         request.destroy();
+
         server.healthy = false;
     });
 }
 
-// Check immediately
+
+// ==========================================
+// Run Health Checks
+// ==========================================
+
 servers.forEach(checkServerHealth);
 
-// Check every 5 seconds
 setInterval(() => {
+
     servers.forEach(checkServerHealth);
+
 }, 5000);
+
 
 // ==========================================
 // Select Healthy Server
 // ==========================================
 
-function getNextServer() {
+function getNextServer(excludedPorts = []) {
+
     for (let i = 0; i < servers.length; i++) {
+
         const index =
             (currentServer + i) % servers.length;
 
-        if (servers[index].healthy) {
-            const server = servers[index];
+        const server = servers[index];
+
+        if (
+            server.healthy &&
+            !excludedPorts.includes(server.port)
+        ) {
 
             currentServer =
                 (index + 1) % servers.length;
@@ -92,26 +116,122 @@ function getNextServer() {
     return null;
 }
 
+
 // ==========================================
-// User Service Handler
+// Proxy One Request
 // ==========================================
 
-function handleUserRequest(req, res) {
-    const server = getNextServer();
+function proxyRequest(
+    req,
+    res,
+    server,
+    targetPath
+) {
 
-    if (!server) {
-        return res.status(503).json({
-            message:
-                "No healthy User Service instances available"
+    return new Promise((resolve, reject) => {
+
+        const options = {
+
+            hostname: "localhost",
+
+            port: server.port,
+
+            path: targetPath,
+
+            method: req.method,
+
+            headers: {
+                ...req.headers,
+                host: `localhost:${server.port}`
+            }
+        };
+
+
+        const proxy = http.request(
+            options,
+            (proxyResponse) => {
+
+                // Successful response
+                res.status(proxyResponse.statusCode);
+
+                Object.keys(
+                    proxyResponse.headers
+                ).forEach((header) => {
+
+                    res.setHeader(
+                        header,
+                        proxyResponse.headers[header]
+                    );
+
+                });
+
+                proxyResponse.pipe(res);
+
+                resolve();
+            }
+        );
+
+
+        // ======================================
+        // Request Error
+        // ======================================
+
+        proxy.on("error", (error) => {
+
+            console.log(
+                `Request failed on :${server.port}`
+            );
+
+            console.log(
+                error.message
+            );
+
+            server.healthy = false;
+
+            reject(error);
         });
-    }
 
-    console.log(
-        `Routing request to User Service :${server.port}`
-    );
 
-    // Express has already removed /api/users
-    // from req.url because of app.use("/api/users", ...)
+        // ======================================
+        // Request Timeout
+        // ======================================
+
+        proxy.setTimeout(2000, () => {
+
+            console.log(
+                `Request timeout on :${server.port}`
+            );
+
+            proxy.destroy();
+
+            server.healthy = false;
+
+            reject(
+                new Error("Request timeout")
+            );
+        });
+
+
+        // ======================================
+        // Send Client Request
+        // ======================================
+
+        req.pipe(proxy);
+    });
+}
+
+
+// ==========================================
+// Handle User Request
+// ==========================================
+
+async function handleUserRequest(req, res) {
+
+    const attemptedServers = [];
+
+    // Express removes /api/users
+    // from req.url.
+
     let userPath = req.url;
 
     if (!userPath || userPath === "/") {
@@ -120,61 +240,91 @@ function handleUserRequest(req, res) {
 
     const targetPath =
         "/users" +
-        (userPath === "/" ? "/" : userPath);
+        (userPath === "/"
+            ? "/"
+            : userPath);
 
-    console.log(
-        `Forwarding request to :${server.port}${targetPath}`
-    );
 
-    const options = {
-        hostname: "localhost",
-        port: server.port,
-        path: targetPath,
-        method: req.method,
-        headers: {
-            ...req.headers,
-            host: `localhost:${server.port}`
-        }
-    };
+    // ======================================
+    // Retry Loop
+    // ======================================
 
-    const proxyRequest = http.request(
-        options,
-        (proxyResponse) => {
-            res.status(proxyResponse.statusCode);
+    for (
+        let attempt = 1;
+        attempt <= MAX_RETRIES;
+        attempt++
+    ) {
 
-            Object.keys(proxyResponse.headers).forEach(
-                (header) => {
-                    res.setHeader(
-                        header,
-                        proxyResponse.headers[header]
-                    );
-                }
+        const server =
+            getNextServer(
+                attemptedServers
             );
 
-            proxyResponse.pipe(res);
-        }
-    );
 
-    proxyRequest.on("error", (error) => {
-        console.log(
-            `Request failed on :${server.port}`
-        );
+        // ==================================
+        // No Server Available
+        // ==================================
 
-        console.log(error.message);
+        if (!server) {
 
-        server.healthy = false;
-
-        if (!res.headersSent) {
-            res.status(502).json({
+            return res.status(503).json({
                 message:
-                    "User Service request failed",
-                server: server.port
+                    "No healthy User Service instances available"
             });
         }
-    });
 
-    req.pipe(proxyRequest);
+
+        attemptedServers.push(
+            server.port
+        );
+
+
+        console.log(
+            `Attempt ${attempt}: ` +
+            `User Service :${server.port}`
+        );
+
+        console.log(
+            `Forwarding to :${server.port}${targetPath}`
+        );
+
+
+        try {
+
+            await proxyRequest(
+                req,
+                res,
+                server,
+                targetPath
+            );
+
+            // Request succeeded
+            return;
+
+        } catch (error) {
+
+            console.log(
+                `Failover triggered from :${server.port}`
+            );
+
+            // Continue loop
+        }
+    }
+
+
+    // ======================================
+    // All Retries Failed
+    // ======================================
+
+    if (!res.headersSent) {
+
+        return res.status(503).json({
+            message:
+                "User Service unavailable after retries"
+        });
+    }
 }
+
 
 module.exports = {
     handleUserRequest
