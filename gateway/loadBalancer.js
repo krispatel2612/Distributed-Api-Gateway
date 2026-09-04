@@ -1,5 +1,10 @@
 const http = require("http");
 
+
+// ==========================================
+// User Service Instances
+// ==========================================
+
 const servers = [
     {
         port: 3001,
@@ -15,9 +20,18 @@ const servers = [
     }
 ];
 
+
+// ==========================================
+// Configuration
+// ==========================================
+
 let currentServer = 0;
 
 const MAX_RETRIES = 3;
+
+const HEALTH_CHECK_INTERVAL = 5000;
+
+const REQUEST_TIMEOUT = 2000;
 
 
 // ==========================================
@@ -31,13 +45,14 @@ function checkServerHealth(server) {
             hostname: "localhost",
             port: server.port,
             path: "/health",
-            timeout: 2000
+            timeout: REQUEST_TIMEOUT
         },
         (response) => {
 
             if (response.statusCode === 200) {
 
                 if (!server.healthy) {
+
                     console.log(
                         `Server recovered: ${server.port}`
                     );
@@ -47,17 +62,29 @@ function checkServerHealth(server) {
 
             } else {
 
-                server.healthy = false;
+                if (server.healthy) {
 
+                    console.log(
+                        `Server unhealthy: ${server.port}`
+                    );
+                }
+
+                server.healthy = false;
             }
 
             response.resume();
         }
     );
 
+
+    // ======================================
+    // Connection Error
+    // ======================================
+
     request.on("error", () => {
 
         if (server.healthy) {
+
             console.log(
                 `Server DOWN: ${server.port}`
             );
@@ -66,9 +93,21 @@ function checkServerHealth(server) {
         server.healthy = false;
     });
 
+
+    // ======================================
+    // Timeout
+    // ======================================
+
     request.on("timeout", () => {
 
         request.destroy();
+
+        if (server.healthy) {
+
+            console.log(
+                `Server DOWN: ${server.port}`
+            );
+        }
 
         server.healthy = false;
     });
@@ -76,7 +115,7 @@ function checkServerHealth(server) {
 
 
 // ==========================================
-// Run Health Checks
+// Start Health Checks
 // ==========================================
 
 servers.forEach(checkServerHealth);
@@ -85,21 +124,27 @@ setInterval(() => {
 
     servers.forEach(checkServerHealth);
 
-}, 5000);
+}, HEALTH_CHECK_INTERVAL);
 
 
 // ==========================================
-// Select Healthy Server
+// Select Next Healthy Server
 // ==========================================
 
 function getNextServer(excludedPorts = []) {
 
-    for (let i = 0; i < servers.length; i++) {
+    for (
+        let i = 0;
+        i < servers.length;
+        i++
+    ) {
 
         const index =
-            (currentServer + i) % servers.length;
+            (currentServer + i) %
+            servers.length;
 
         const server = servers[index];
+
 
         if (
             server.healthy &&
@@ -107,7 +152,8 @@ function getNextServer(excludedPorts = []) {
         ) {
 
             currentServer =
-                (index + 1) % servers.length;
+                (index + 1) %
+                servers.length;
 
             return server;
         }
@@ -118,10 +164,38 @@ function getNextServer(excludedPorts = []) {
 
 
 // ==========================================
-// Proxy One Request
+// Build Target Path
 // ==========================================
 
-function proxyRequest(
+function getTargetPath(req) {
+
+    // Express removes /api/users
+    // because this handler is mounted on:
+    //
+    // app.use("/api/users", handleUserRequest)
+
+    let userPath = req.url || "/";
+
+
+    // Make sure path starts with /
+    if (!userPath.startsWith("/")) {
+
+        userPath = "/" + userPath;
+    }
+
+
+    return (
+        "/users" +
+        userPath
+    );
+}
+
+
+// ==========================================
+// Proxy Request
+// ==========================================
+
+function proxyToServer(
     req,
     res,
     server,
@@ -142,30 +216,77 @@ function proxyRequest(
 
             headers: {
                 ...req.headers,
-                host: `localhost:${server.port}`
+
+                host:
+                    `localhost:${server.port}`
             }
         };
+
+
+        console.log(
+            `Forwarding to :${server.port}${targetPath}`
+        );
 
 
         const proxy = http.request(
             options,
             (proxyResponse) => {
 
-                // Successful response
-                res.status(proxyResponse.statusCode);
+                // ==================================
+                // Server responded
+                // ==================================
+
+                res.status(
+                    proxyResponse.statusCode
+                );
+
+
+                // ==================================
+                // Copy response headers
+                // ==================================
 
                 Object.keys(
                     proxyResponse.headers
                 ).forEach((header) => {
 
+                    // Do NOT overwrite
+                    // Gateway cache header
+                    if (
+                        header.toLowerCase() ===
+                        "x-cache"
+                    ) {
+
+                        return;
+                    }
+
+
+                    // Express will manage this
+                    if (
+                        header.toLowerCase() ===
+                        "content-length"
+                    ) {
+
+                        return;
+                    }
+
+
                     res.setHeader(
                         header,
                         proxyResponse.headers[header]
                     );
-
                 });
 
+
+                // ==================================
+                // Forward response
+                // ==================================
+
                 proxyResponse.pipe(res);
+
+
+                // ==================================
+                // Request succeeded
+                // ==================================
 
                 resolve();
             }
@@ -173,7 +294,7 @@ function proxyRequest(
 
 
         // ======================================
-        // Request Error
+        // Proxy Error
         // ======================================
 
         proxy.on("error", (error) => {
@@ -186,34 +307,44 @@ function proxyRequest(
                 error.message
             );
 
+
             server.healthy = false;
+
 
             reject(error);
         });
 
 
         // ======================================
-        // Request Timeout
+        // Proxy Timeout
         // ======================================
 
-        proxy.setTimeout(2000, () => {
+        proxy.setTimeout(
+            REQUEST_TIMEOUT,
+            () => {
 
-            console.log(
-                `Request timeout on :${server.port}`
-            );
+                console.log(
+                    `Request timeout on :${server.port}`
+                );
 
-            proxy.destroy();
 
-            server.healthy = false;
+                proxy.destroy();
 
-            reject(
-                new Error("Request timeout")
-            );
-        });
+
+                server.healthy = false;
+
+
+                reject(
+                    new Error(
+                        "Request timeout"
+                    )
+                );
+            }
+        );
 
 
         // ======================================
-        // Send Client Request
+        // Forward Client Request
         // ======================================
 
         req.pipe(proxy);
@@ -229,25 +360,13 @@ async function handleUserRequest(req, res) {
 
     const attemptedServers = [];
 
-    // Express removes /api/users
-    // from req.url.
-
-    let userPath = req.url;
-
-    if (!userPath || userPath === "/") {
-        userPath = "/";
-    }
-
     const targetPath =
-        "/users" +
-        (userPath === "/"
-            ? "/"
-            : userPath);
+        getTargetPath(req);
 
 
-    // ======================================
-    // Retry Loop
-    // ======================================
+    // ==========================================
+    // Retry / Failover
+    // ==========================================
 
     for (
         let attempt = 1;
@@ -261,16 +380,21 @@ async function handleUserRequest(req, res) {
             );
 
 
-        // ==================================
-        // No Server Available
-        // ==================================
+        // ======================================
+        // No Healthy Server
+        // ======================================
 
         if (!server) {
 
-            return res.status(503).json({
-                message:
-                    "No healthy User Service instances available"
-            });
+            if (!res.headersSent) {
+
+                return res.status(503).json({
+                    message:
+                        "No healthy User Service instances available"
+                });
+            }
+
+            return;
         }
 
 
@@ -284,21 +408,21 @@ async function handleUserRequest(req, res) {
             `User Service :${server.port}`
         );
 
-        console.log(
-            `Forwarding to :${server.port}${targetPath}`
-        );
-
 
         try {
 
-            await proxyRequest(
+            await proxyToServer(
                 req,
                 res,
                 server,
                 targetPath
             );
 
-            // Request succeeded
+
+            // ==================================
+            // SUCCESS
+            // ==================================
+
             return;
 
         } catch (error) {
@@ -307,24 +431,41 @@ async function handleUserRequest(req, res) {
                 `Failover triggered from :${server.port}`
             );
 
-            // Continue loop
+
+            // If response has already started,
+            // don't try another server.
+            if (res.headersSent) {
+
+                return;
+            }
+
+
+            // Continue to next healthy server
         }
     }
 
 
-    // ======================================
-    // All Retries Failed
-    // ======================================
+    // ==========================================
+    // All Attempts Failed
+    // ==========================================
 
     if (!res.headersSent) {
 
         return res.status(503).json({
+
             message:
-                "User Service unavailable after retries"
+                "User Service unavailable after retries",
+
+            attempts:
+                attemptedServers
         });
     }
 }
 
+
+// ==========================================
+// Export
+// ==========================================
 
 module.exports = {
     handleUserRequest
