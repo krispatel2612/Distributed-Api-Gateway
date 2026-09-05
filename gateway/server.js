@@ -30,6 +30,9 @@ const {
     cacheResponse
 } = require("./middleware/cache");
 
+const {
+    requestLogger
+} = require("./middleware/logger");
 
 const app = express();
 
@@ -41,6 +44,13 @@ const PORT = 3000;
 // ==========================================
 
 app.use(express.json());
+
+
+// ==========================================
+// Request Logging
+// ==========================================
+
+app.use(requestLogger);
 
 
 // ==========================================

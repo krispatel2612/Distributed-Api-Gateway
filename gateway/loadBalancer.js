@@ -1,5 +1,5 @@
-const http = require("http");
 
+const http = require("http");
 
 // ==========================================
 // User Service Instances
@@ -7,19 +7,24 @@ const http = require("http");
 
 const servers = [
     {
-        port: 3001,
-        healthy: true
+        name: "user-service-1",
+        host: process.env.USER_SERVICE_1_HOST || "user-service-1",
+        port: Number(process.env.USER_SERVICE_1_PORT) || 3001,
+        healthy: false
     },
     {
-        port: 3011,
-        healthy: true
+        name: "user-service-2",
+        host: process.env.USER_SERVICE_2_HOST || "user-service-2",
+        port: Number(process.env.USER_SERVICE_2_PORT) || 3001,
+        healthy: false
     },
     {
-        port: 3021,
-        healthy: true
+        name: "user-service-3",
+        host: process.env.USER_SERVICE_3_HOST || "user-service-3",
+        port: Number(process.env.USER_SERVICE_3_PORT) || 3001,
+        healthy: false
     }
 ];
-
 
 // ==========================================
 // Configuration
@@ -28,11 +33,8 @@ const servers = [
 let currentServer = 0;
 
 const MAX_RETRIES = 3;
-
 const HEALTH_CHECK_INTERVAL = 5000;
-
 const REQUEST_TIMEOUT = 2000;
-
 
 // ==========================================
 // Health Check
@@ -42,7 +44,7 @@ function checkServerHealth(server) {
 
     const request = http.get(
         {
-            hostname: "localhost",
+            hostname: server.host,
             port: server.port,
             path: "/health",
             timeout: REQUEST_TIMEOUT
@@ -52,9 +54,8 @@ function checkServerHealth(server) {
             if (response.statusCode === 200) {
 
                 if (!server.healthy) {
-
                     console.log(
-                        `Server recovered: ${server.port}`
+                        `Server recovered: ${server.name} (${server.host}:${server.port})`
                     );
                 }
 
@@ -63,9 +64,8 @@ function checkServerHealth(server) {
             } else {
 
                 if (server.healthy) {
-
                     console.log(
-                        `Server unhealthy: ${server.port}`
+                        `Server unhealthy: ${server.name}`
                     );
                 }
 
@@ -76,36 +76,24 @@ function checkServerHealth(server) {
         }
     );
 
-
-    // ======================================
-    // Connection Error
-    // ======================================
-
-    request.on("error", () => {
+    request.on("error", (error) => {
 
         if (server.healthy) {
-
             console.log(
-                `Server DOWN: ${server.port}`
+                `Server DOWN: ${server.name} (${server.host}:${server.port})`
             );
         }
 
         server.healthy = false;
     });
 
-
-    // ======================================
-    // Timeout
-    // ======================================
-
     request.on("timeout", () => {
 
         request.destroy();
 
         if (server.healthy) {
-
             console.log(
-                `Server DOWN: ${server.port}`
+                `Server TIMEOUT: ${server.name}`
             );
         }
 
@@ -113,10 +101,11 @@ function checkServerHealth(server) {
     });
 }
 
-
 // ==========================================
 // Start Health Checks
 // ==========================================
+
+console.log("Starting User Service health checks...");
 
 servers.forEach(checkServerHealth);
 
@@ -126,34 +115,26 @@ setInterval(() => {
 
 }, HEALTH_CHECK_INTERVAL);
 
-
 // ==========================================
 // Select Next Healthy Server
 // ==========================================
 
-function getNextServer(excludedPorts = []) {
+function getNextServer(excludedServers = []) {
 
-    for (
-        let i = 0;
-        i < servers.length;
-        i++
-    ) {
+    for (let i = 0; i < servers.length; i++) {
 
         const index =
-            (currentServer + i) %
-            servers.length;
+            (currentServer + i) % servers.length;
 
         const server = servers[index];
 
-
         if (
             server.healthy &&
-            !excludedPorts.includes(server.port)
+            !excludedServers.includes(server.name)
         ) {
 
             currentServer =
-                (index + 1) %
-                servers.length;
+                (index + 1) % servers.length;
 
             return server;
         }
@@ -162,34 +143,20 @@ function getNextServer(excludedPorts = []) {
     return null;
 }
 
-
 // ==========================================
 // Build Target Path
 // ==========================================
 
 function getTargetPath(req) {
 
-    // Express removes /api/users
-    // because this handler is mounted on:
-    //
-    // app.use("/api/users", handleUserRequest)
-
     let userPath = req.url || "/";
 
-
-    // Make sure path starts with /
     if (!userPath.startsWith("/")) {
-
         userPath = "/" + userPath;
     }
 
-
-    return (
-        "/users" +
-        userPath
-    );
+    return "/users" + userPath;
 }
-
 
 // ==========================================
 // Proxy Request
@@ -206,7 +173,7 @@ function proxyToServer(
 
         const options = {
 
-            hostname: "localhost",
+            hostname: server.host,
 
             port: server.port,
 
@@ -218,57 +185,51 @@ function proxyToServer(
                 ...req.headers,
 
                 host:
-                    `localhost:${server.port}`
+                    `${server.host}:${server.port}`
             }
         };
 
-
         console.log(
-            `Forwarding to :${server.port}${targetPath}`
+            `Forwarding to ${server.name} ` +
+            `(${server.host}:${server.port})${targetPath}`
         );
-
 
         const proxy = http.request(
             options,
             (proxyResponse) => {
 
                 // ==================================
-                // Server responded
+                // Response Status
                 // ==================================
 
                 res.status(
                     proxyResponse.statusCode
                 );
 
-
                 // ==================================
-                // Copy response headers
+                // Copy Headers
                 // ==================================
 
                 Object.keys(
                     proxyResponse.headers
                 ).forEach((header) => {
 
-                    // Do NOT overwrite
-                    // Gateway cache header
-                    if (
-                        header.toLowerCase() ===
-                        "x-cache"
-                    ) {
+                    const lowerHeader =
+                        header.toLowerCase();
 
+                    // Gateway controls cache header
+                    if (
+                        lowerHeader === "x-cache"
+                    ) {
                         return;
                     }
 
-
-                    // Express will manage this
+                    // Express manages content length
                     if (
-                        header.toLowerCase() ===
-                        "content-length"
+                        lowerHeader === "content-length"
                     ) {
-
                         return;
                     }
-
 
                     res.setHeader(
                         header,
@@ -276,81 +237,64 @@ function proxyToServer(
                     );
                 });
 
-
                 // ==================================
-                // Forward response
+                // Forward Response
                 // ==================================
 
                 proxyResponse.pipe(res);
-
-
-                // ==================================
-                // Request succeeded
-                // ==================================
 
                 resolve();
             }
         );
 
-
-        // ======================================
+        // ==========================================
         // Proxy Error
-        // ======================================
+        // ==========================================
 
         proxy.on("error", (error) => {
 
             console.log(
-                `Request failed on :${server.port}`
+                `Request failed on ${server.name}`
             );
 
             console.log(
                 error.message
             );
 
-
             server.healthy = false;
-
 
             reject(error);
         });
 
-
-        // ======================================
+        // ==========================================
         // Proxy Timeout
-        // ======================================
+        // ==========================================
 
         proxy.setTimeout(
             REQUEST_TIMEOUT,
             () => {
 
                 console.log(
-                    `Request timeout on :${server.port}`
+                    `Request timeout on ${server.name}`
                 );
-
 
                 proxy.destroy();
 
-
                 server.healthy = false;
 
-
                 reject(
-                    new Error(
-                        "Request timeout"
-                    )
+                    new Error("Request timeout")
                 );
             }
         );
 
-
-        // ======================================
-        // Forward Client Request
-        // ======================================
+        // ==========================================
+        // Forward Request
+        // ==========================================
 
         req.pipe(proxy);
     });
 }
-
 
 // ==========================================
 // Handle User Request
@@ -362,7 +306,6 @@ async function handleUserRequest(req, res) {
 
     const targetPath =
         getTargetPath(req);
-
 
     // ==========================================
     // Retry / Failover
@@ -378,7 +321,6 @@ async function handleUserRequest(req, res) {
             getNextServer(
                 attemptedServers
             );
-
 
         // ======================================
         // No Healthy Server
@@ -397,17 +339,14 @@ async function handleUserRequest(req, res) {
             return;
         }
 
-
         attemptedServers.push(
-            server.port
+            server.name
         );
-
 
         console.log(
             `Attempt ${attempt}: ` +
-            `User Service :${server.port}`
+            `${server.name}`
         );
-
 
         try {
 
@@ -418,7 +357,6 @@ async function handleUserRequest(req, res) {
                 targetPath
             );
 
-
             // ==================================
             // SUCCESS
             // ==================================
@@ -428,22 +366,16 @@ async function handleUserRequest(req, res) {
         } catch (error) {
 
             console.log(
-                `Failover triggered from :${server.port}`
+                `Failover triggered from ${server.name}`
             );
 
-
-            // If response has already started,
-            // don't try another server.
             if (res.headersSent) {
-
                 return;
             }
 
-
-            // Continue to next healthy server
+            // Continue to next server
         }
     }
-
 
     // ==========================================
     // All Attempts Failed
@@ -462,7 +394,6 @@ async function handleUserRequest(req, res) {
     }
 }
 
-
 // ==========================================
 // Export
 // ==========================================
@@ -470,3 +401,4 @@ async function handleUserRequest(req, res) {
 module.exports = {
     handleUserRequest
 };
+

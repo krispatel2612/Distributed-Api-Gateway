@@ -4,7 +4,7 @@ const app = express();
 
 app.use(express.json());
 
-const PORT = 3003;
+const PORT = process.env.PORT || 3003;
 
 // Temporary order data
 const orders = [

@@ -6,7 +6,10 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// Home route
+// ==========================================
+// Home
+// ==========================================
+
 app.get("/", (req, res) => {
     res.json({
         service: "User Service",
@@ -15,10 +18,15 @@ app.get("/", (req, res) => {
     });
 });
 
-// Get users
+// ==========================================
+// Get All Users
+// ==========================================
+
 app.get("/users", (req, res) => {
+
     res.json({
-        instance: PORT,
+        instance: process.env.INSTANCE_NAME || PORT,
+
         users: [
             {
                 id: 1,
@@ -34,26 +42,44 @@ app.get("/users", (req, res) => {
     });
 });
 
-// Get user by ID
+// ==========================================
+// Get User By ID
+// ==========================================
+
 app.get("/users/:id", (req, res) => {
+
     const id = req.params.id;
 
     res.json({
+        instance: process.env.INSTANCE_NAME || PORT,
         id: id,
         name: "Kris",
         email: "kris@example.com"
     });
 });
 
-// Health check
+// ==========================================
+// Health Check
+// ==========================================
+
 app.get("/health", (req, res) => {
-    res.json({
+
+    res.status(200).json({
         service: "user-service",
         status: "UP",
+        instance: process.env.INSTANCE_NAME || PORT,
         port: PORT
     });
 });
 
-app.listen(PORT, () => {
-    console.log(`User Service running on port ${PORT}`);
+// ==========================================
+// Start Server
+// ==========================================
+
+app.listen(PORT, "0.0.0.0", () => {
+
+    console.log(
+        `User Service ${process.env.INSTANCE_NAME || ""} running on port ${PORT}`
+    );
+
 });

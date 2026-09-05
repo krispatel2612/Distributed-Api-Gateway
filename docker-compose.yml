@@ -1,0 +1,161 @@
+services:
+
+  # ==========================================
+  # Redis
+  # ==========================================
+
+  redis:
+    image: redis:7-alpine
+
+    container_name: api-gateway-redis
+
+    ports:
+      - "6379:6379"
+
+    restart: unless-stopped
+
+
+  # ==========================================
+  # API Gateway
+  # ==========================================
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+
+    container_name: api-gateway
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      PORT: 3000
+
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      USER_SERVICE_1_HOST: user-service-1
+      USER_SERVICE_1_PORT: 3001
+
+      USER_SERVICE_2_HOST: user-service-2
+      USER_SERVICE_2_PORT: 3001
+
+      USER_SERVICE_3_HOST: user-service-3
+      USER_SERVICE_3_PORT: 3001
+
+    depends_on:
+      - redis
+      - user-service-1
+      - user-service-2
+      - user-service-3
+      - product-service
+      - order-service
+
+    restart: unless-stopped
+
+
+  # ==========================================
+  # User Service 1
+  # ==========================================
+
+  user-service-1:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+
+    container_name: user-service-1
+
+    environment:
+      PORT: 3001
+      INSTANCE_NAME: user-service-1
+
+    expose:
+      - "3001"
+
+    restart: unless-stopped
+
+
+  # ==========================================
+  # User Service 2
+  # ==========================================
+
+  user-service-2:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+
+    container_name: user-service-2
+
+    environment:
+      PORT: 3001
+      INSTANCE_NAME: user-service-2
+
+    expose:
+      - "3001"
+
+    restart: unless-stopped
+
+
+  # ==========================================
+  # User Service 3
+  # ==========================================
+
+  user-service-3:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+
+    container_name: user-service-3
+
+    environment:
+      PORT: 3001
+      INSTANCE_NAME: user-service-3
+
+    expose:
+      - "3001"
+
+    restart: unless-stopped
+
+
+  # ==========================================
+  # Product Service
+  # ==========================================
+
+  product-service:
+    build:
+      context: ./services/product-service
+      dockerfile: Dockerfile
+
+    container_name: product-service
+
+    environment:
+      PORT: 3002
+
+    expose:
+      - "3002"
+
+    restart: unless-stopped
+
+
+  # ==========================================
+  # Order Service
+  # ==========================================
+
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+
+    container_name: order-service
+
+    environment:
+      PORT: 3003
+
+    expose:
+      - "3003"
+
+    restart: unless-stopped
